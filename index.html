@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ANC Noise Analyzer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f6feb">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ANC Analyzer">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#16191d;--mut:#5d6670;--line:#e3e6ea;--acc:#1f6feb;--good:#1a7f37;--mid:#b26b00;--bad:#c62828;--chip:#eef1f5}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1214;--card:#181c20;--ink:#e8ebee;--mut:#99a3ad;--line:#2a3036;--acc:#4c8dff;--good:#3fb950;--mid:#e3a33b;--bad:#ff6b6b;--chip:#232930}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:14px 12px 40px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{font-size:15px;margin:0 0 10px;display:flex;gap:8px;align-items:center}
+.num{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--acc);color:#fff;font-size:12px;align-items:center;justify-content:center}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button,.btn{appearance:none;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:10px;padding:11px 14px;font:inherit;font-weight:600;cursor:pointer;flex:1 1 auto;text-align:center}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button:disabled{opacity:.5}
+label.btn input{display:none}
+select,input[type=number]{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.status{font-size:13px;color:var(--mut);margin-top:10px;min-height:1.2em}
+.status.err{color:var(--bad)}
+.bar{height:6px;background:var(--chip);border-radius:3px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+canvas{width:100%;display:block;border-radius:10px;background:var(--chip)}
+.verdict{display:flex;gap:14px;align-items:center}
+.big{font-size:34px;font-weight:800;line-height:1}
+.big small{font-size:14px;font-weight:600;color:var(--mut)}
+.vt{font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.kpi{background:var(--chip);border-radius:10px;padding:8px}
+.kpi b{display:block;font-size:17px}
+.kpi span{font-size:12px;color:var(--mut)}
+.bands{display:grid;gap:5px;margin-top:6px}
+.band{display:grid;grid-template-columns:86px 1fr 42px;gap:8px;align-items:center;font-size:13px}
+.band .t{height:12px;background:var(--chip);border-radius:6px;overflow:hidden}
+.band .t i{display:block;height:100%}
+.peak{border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px;cursor:pointer}
+.peak.sel{outline:2px solid var(--acc)}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pf{font-size:18px;font-weight:800}
+.tag{font-size:12px;font-weight:700;padding:3px 8px;border-radius:20px;color:#fff;white-space:nowrap}
+.good{background:var(--good)}.mid{background:var(--mid)}.bad{background:var(--bad)}
+.pm{font-size:12.5px;color:var(--mut);margin-top:3px}
+.why{font-size:13px;margin-top:5px}
+.ctl{display:grid;grid-template-columns:80px 1fr 70px;gap:8px;align-items:center;margin:8px 0}
+.ctl output{text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
+input[type=range]{width:100%}
+ul.tips{margin:6px 0 0;padding-left:18px;font-size:13.5px}
+ul.tips li{margin-bottom:5px}
+.hide{display:none}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--mut);margin-top:6px;flex-wrap:wrap}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.note{font-size:12.5px;color:var(--mut);margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>ANC Noise Analyzer</h1>
+<div class="sub">Measures a noise, finds its tones and tells you which parts active noise cancelling can realistically reduce. Everything runs on your device; no audio is uploaded.</div>
+
+<section class="card">
+  <h2><span class="num">1</span>Capture the noise</h2>
+  <div class="row">
+    <select id="dur" aria-label="Recording length"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option><option value="30">30 s</option></select>
+    <button class="pri" id="btnLive">🎤 Measure live</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <label class="btn">📁 Analyze a recording<input type="file" id="file" accept="audio/*,video/*,.wav,.m4a,.mp3,.aac,.ogg,.webm"></label>
+    <button id="btnDemo">🏭 Demo: machine noise</button>
+  </div>
+  <canvas id="live" height="110" class="hide" style="margin-top:10px"></canvas>
+  <div class="bar hide" id="prog"><i></i></div>
+  <div class="status" id="status">Hold the phone where the operator's ear would be, keep still, and capture 10–30 s of steady machine noise.</div>
+</section>
+
+<section class="card hide" id="resCard">
+  <h2><span class="num">2</span>Result</h2>
+  <div class="verdict">
+    <div class="big" id="vNum">–</div>
+    <div><div class="vt" id="vTitle"></div><div class="pm" id="vText"></div></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b id="kTonal">–</b><span>of the heard energy is in tones</span></div>
+    <div class="kpi"><b id="kLow">–</b><span>is below 500 Hz</span></div>
+    <div class="kpi"><b id="kLvl">–</b><span>level (dBFS, A-wtd)</span></div>
+  </div>
+  <div style="margin-top:14px"><canvas id="spec" height="230"></canvas>
+    <div class="legend"><span><i class="dot good"></i>Good ANC target</span><span><i class="dot mid"></i>Possible</span><span><i class="dot bad"></i>Not suitable for ANC</span></div>
+  </div>
+  <div style="margin-top:14px;font-weight:700;font-size:14px">Where the heard energy is (A-weighted)</div>
+  <div class="bands" id="bands"></div>
+  <div style="margin-top:14px;font-weight:700;font-size:14px">Detected tones <span class="pm">tap one to load it into the anti-tone test</span></div>
+  <div id="peaks" style="margin-top:6px"></div>
+  <div class="row" style="margin-top:6px"><button id="btnCopy">📋 Copy summary</button><button id="btnPlayRec">▶ Play recording</button><button id="btnWav">💾 Save WAV</button></div>
+</section>
+
+<section class="card hide" id="genCard">
+  <h2><span class="num">3</span>Try an anti-tone on the Bluetooth speaker</h2>
+  <div class="pm">Plays one tone through whatever speaker the phone is connected to. Put the speaker between the machine and your ear, then turn <b>Phase</b> slowly until the hum drops. The quiet spot is small and moves if you move.</div>
+  <div class="ctl"><span>Frequency</span><input type="range" id="gF" min="20" max="2000" step="0.01"><output id="oF"></output></div>
+  <div class="ctl"><span>Fine tune</span><input type="range" id="gFt" min="-3" max="3" step="0.01" value="0"><output id="oFt">0.00 Hz</output></div>
+  <div class="ctl"><span>Phase</span><input type="range" id="gP" min="0" max="360" step="1" value="180"><output id="oP">180°</output></div>
+  <div class="ctl"><span>Level</span><input type="range" id="gG" min="0" max="1" step="0.01" value="0.2"><output id="oG">20%</output></div>
+  <div class="row"><button class="pri" id="gPlay">▶ Play anti-tone</button></div>
+  <div class="note">If you hear slow "wah-wah" beating, the machine's frequency differs slightly from the tone: adjust Fine tune until the beating slows down. A machine whose speed drifts needs a speed (tacho/PLC) reference, which is what the real controller uses.</div>
+</section>
+
+<section class="card">
+  <h2>Bluetooth & phone tips</h2>
+  <ul class="tips">
+    <li><b>Use the phone's own microphone, not the speaker's.</b> Opening a Bluetooth speaker's mic switches it into hands-free mode (mono, ~8–16 kHz, filtered), which ruins measurements and audio quality.</li>
+    <li><b>Output goes to the connected Bluetooth speaker automatically</b>; phone browsers can't pick an output device.</li>
+    <li><b>Bluetooth adds ~150–300 ms of delay.</b> That's fine for analysis and for steady tones, but it rules out cancelling anything that changes.</li>
+    <li>Small Bluetooth speakers barely play below <b>~100–150 Hz</b>; deep hum needs a woofer.</li>
+    <li>Levels are relative (dBFS), not calibrated dB SPL. For real SPL, use a calibrated mic such as the UMIK-1.</li>
+    <li><b>Save WAV</b> keeps the raw recording, so you can run it through the FxLMS simulation (<code>anc_sim.py</code>) later.</li>
+    <li><b>Install:</b> Android Chrome → ⋮ → <i>Add to Home screen / Install app</i>. iPhone Safari → Share → <i>Add to Home Screen</i>. After the first visit it works offline.</li>
+  </ul>
+</section>
+</main>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+let AC=null; function ctx(){ if(!AC){ const C=window.AudioContext||window.webkitAudioContext; AC=new C(); } if(AC.state==="suspended") AC.resume(); return AC; }
+const setStatus=(t,err)=>{const s=$("status");s.textContent=t;s.classList.toggle("err",!!err);};
+const prog=(p)=>{const b=$("prog");if(p==null){b.classList.add("hide");return;}b.classList.remove("hide");b.firstElementChild.style.width=(p*100).toFixed(0)+"%";};
+
+/* ---------------- DSP ---------------- */
+function fft(re,im){const n=re.length;for(let i=1,j=0;i<n;i++){let bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}}
+ for(let len=2;len<=n;len<<=1){const h=len>>1,ang=-2*Math.PI/len;for(let k=0;k<h;k++){const wr=Math.cos(ang*k),wi=Math.sin(ang*k);for(let i=k;i<n;i+=len){const b=i+h,tr=re[b]*wr-im[b]*wi,ti=re[b]*wi+im[b]*wr;re[b]=re[i]-tr;im[b]=im[i]-ti;re[i]+=tr;im[i]+=ti;}}}}
+function aWeightDb(f){if(f<=0)return -200;const f2=f*f;const ra=(12194**2)*f2*f2/((f2+20.6**2)*Math.sqrt((f2+107.7**2)*(f2+737.9**2))*(f2+12194**2));return 20*Math.log10(ra)+2.0;}
+const db=p=>10*Math.log10(p+1e-20);
+const C_SOUND=343;
+
+function analyze(x,sr){
+  const maxLen=Math.min(x.length,Math.round(sr*90));
+  const N=sr>60000?32768:16384, hop=N/2;
+  if(maxLen<N) throw new Error("Recording is too short. Capture at least 2 seconds.");
+  let mean=0;for(let i=0;i<maxLen;i++)mean+=x[i];mean/=maxLen;
+  const w=new Float64Array(N);let S1=0;for(let i=0;i<N;i++){w[i]=0.5-0.5*Math.cos(2*Math.PI*i/N);S1+=w[i];}
+  const df=sr/N, fmax=Math.min(sr/2*0.95,12000), K=Math.floor(fmax/df);
+  const nF=Math.floor((maxLen-N)/hop)+1;
+  const frames=[];const avg=new Float64Array(K);
+  const re=new Float64Array(N),im=new Float64Array(N);const sc=2/(S1*S1);
+  for(let f=0;f<nF;f++){const o=f*hop;for(let i=0;i<N;i++){re[i]=(x[o+i]-mean)*w[i];im[i]=0;}fft(re,im);
+    const fr=new Float32Array(K);for(let k=0;k<K;k++){const p=(re[k]*re[k]+im[k]*im[k])*sc;fr[k]=p;avg[k]+=p;}frames.push(fr);}
+  for(let k=0;k<K;k++)avg[k]/=nF;
+  const ENBW=1.5;
+  const L=new Float64Array(K);for(let k=0;k<K;k++)L[k]=db(avg[k]);
+  // background floor: running median
+  const W=Math.max(6,Math.round(40/df));const floor=new Float64Array(K);const tmp=[];
+  for(let k=0;k<K;k++){tmp.length=0;for(let j=Math.max(1,k-W);j<=Math.min(K-1,k+W);j++)tmp.push(L[j]);tmp.sort((a,b)=>a-b);floor[k]=tmp[tmp.length>>1];}
+  const wA=new Float64Array(K);for(let k=0;k<K;k++)wA[k]=10**(aWeightDb(k*df)/10);
+  const k0=Math.max(2,Math.ceil(20/df));
+  let Ptot=0,PtotA=0;for(let k=k0;k<K;k++){Ptot+=avg[k];PtotA+=avg[k]*wA[k];}Ptot/=ENBW;PtotA/=ENBW;
+  // peaks
+  const kTop=Math.min(K-4,Math.floor(8000/df));let cand=[];
+  for(let k=Math.max(k0,4);k<kTop;k++){const v=L[k];let isMax=true;for(let j=-3;j<=3;j++){if(j&&L[k+j]>v){isMax=false;break;}}
+    if(!isMax)continue;const prom=v-floor[k];if(prom<10)continue;
+    const a=L[k-1],b=L[k],c=L[k+1];const d=a-2*b+c;const p=d!==0?0.5*(a-c)/d:0;const fpk=(k+Math.max(-.5,Math.min(.5,p)))*df;
+    let pw=0,pwA=0;for(let j=-3;j<=3;j++){pw+=avg[k+j];pwA+=avg[k+j]*wA[k+j];}
+    // remove the background under the peak
+    const bg=10**(floor[k]/10)*7;pw=Math.max(0,pw-bg)/ENBW;pwA=Math.max(0,pwA-bg*wA[k])/ENBW;
+    cand.push({k,f:fpk,prom,level:v,pw,pwA});}
+  cand.sort((a,b)=>b.pwA-a.pwA);cand=cand.slice(0,12);
+  // stability across frames
+  for(const c of cand){const fs=[],ls=[];for(const fr of frames){let kb=c.k,best=fr[kb];for(let j=-2;j<=2;j++){if(fr[c.k+j]>best){best=fr[c.k+j];kb=c.k+j;}}
+      const a=db(fr[kb-1]),b=db(fr[kb]),cc=db(fr[kb+1]);const d=a-2*b+cc;const p=d!==0?0.5*(a-cc)/d:0;fs.push((kb+Math.max(-.5,Math.min(.5,p)))*df);ls.push(b);}
+    const m=a=>a.reduce((s,v)=>s+v,0)/a.length;const sd=a=>{const mu=m(a);return Math.sqrt(m(a.map(v=>(v-mu)**2)));};
+    c.fJit=fs.length>1?sd(fs):0;c.lJit=ls.length>1?sd(ls):0;}
+  // harmonics
+  const byF=[...cand].sort((a,b)=>a.f-b.f);
+  for(const p of byF){for(const q of byF){if(q.f>=p.f||q.harmOf)continue;const r=p.f/q.f,n=Math.round(r);if(n>=2&&n<=20&&Math.abs(p.f-n*q.f)<Math.max(0.8,0.003*p.f)){p.harmOf=q;p.harmN=n;q.isFund=true;break;}}}
+  for(const c of cand)score(c,df);
+  // bands (A-weighted)
+  const edges=[[20,200,"< 200 Hz"],[200,500,"200–500 Hz"],[500,1000,"0.5–1 kHz"],[1000,2000,"1–2 kHz"],[2000,4000,"2–4 kHz"],[4000,fmax,"> 4 kHz"]];
+  const bands=edges.map(([a,b,n])=>{let s=0;for(let k=Math.ceil(a/df);k<Math.min(K,b/df);k++)s+=avg[k]*wA[k];return{name:n,lo:a,hi:b,p:s/ENBW};});
+  // estimated reduction if good tones -20 dB, possible -10 dB
+  let removed=0,tonal=0;for(const c of cand){tonal+=c.pwA;if(c.tier==="good")removed+=c.pwA*0.99;else if(c.tier==="mid")removed+=c.pwA*0.9;}
+  const red=10*Math.log10(PtotA/Math.max(PtotA-removed,PtotA*1e-4));
+  const low=bands[0].p+bands[1].p;
+  return {sr,df,K,L,floor,avg,peaks:cand,bands,PtotA,Ptot,red,tonalFrac:tonal/PtotA,lowFrac:low/PtotA,levelA:db(PtotA),dur:maxLen/sr,nF};
+}
+
+function score(c,df){
+  const f=c.f;
+  let ff; if(f<=300)ff=1;else if(f<=1000)ff=1-0.6*(f-300)/700;else if(f<=2000)ff=0.4-0.3*(f-1000)/1000;else ff=Math.max(0,0.1-0.1*(f-2000)/2000);
+  const pf=Math.max(0,Math.min(1,(c.prom-6)/20));
+  const relJ=Math.max(0,c.fJit-df*0.15)/f; // remove quantisation floor
+  let sf; if(relJ<0.002)sf=1;else if(relJ>0.03)sf=0.15;else sf=1-0.85*Math.log(relJ/0.002)/Math.log(15);
+  const lf=c.lJit<3?1:c.lJit>9?0.5:1-0.5*(c.lJit-3)/6;
+  c.score=Math.round(100*ff*(0.45+0.55*pf)*sf*lf);
+  c.tier=c.score>=60?"good":c.score>=30?"mid":"bad";
+  c.zone=C_SOUND/(20*f)*100; // cm radius for ~10 dB
+  const why=[];
+  if(f>1000)why.push(`Above 1 kHz: the quiet zone is only ~${c.zone.toFixed(1)} cm, so use enclosures, damping or silencers instead.`);
+  else if(f>500)why.push(`Mid frequency: ANC can only work in a small spot (~${c.zone.toFixed(1)} cm).`);
+  else why.push(`Low frequency: a good range for ANC (quiet zone ~${c.zone.toFixed(0)} cm).`);
+  if(c.prom>=20)why.push(`Stands ${c.prom.toFixed(0)} dB above the background.`);else why.push(`Only ${c.prom.toFixed(0)} dB above the background.`);
+  if(relJ<0.002)why.push("Very steady frequency.");else if(relJ<0.01)why.push(`Frequency wanders ±${c.fJit.toFixed(1)} Hz: needs tracking or a speed reference.`);else why.push(`Frequency drifts ±${c.fJit.toFixed(1)} Hz: needs a tacho/encoder/PLC reference.`);
+  if(c.lJit>6)why.push(`Level fluctuates (±${c.lJit.toFixed(0)} dB).`);
+  if(f<150)why.push("A small Bluetooth speaker can't reproduce this; it needs a woofer.");
+  c.why=why.join(" ");
+}
+
+/* ---------------- Rendering ---------------- */
+let R=null, recBuf=null, selPeak=null;
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+function drawSpec(){
+  if(!R)return;const cv=$("spec"),dpr=window.devicePixelRatio||1,Wd=cv.clientWidth,H=230;cv.width=Wd*dpr;cv.height=H*dpr;const g=cv.getContext("2d");g.scale(dpr,dpr);
+  const pl=34,pr=8,pt=8,pb=22,fx=f=>pl+(Math.log10(f)-Math.log10(20))/(Math.log10(10000)-Math.log10(20))*(Wd-pl-pr);
+  let mx=-200;for(let k=2;k<R.K;k++)mx=Math.max(mx,R.L[k]);const top=Math.ceil(mx/10)*10+5,bot=top-80;const fy=v=>pt+(top-v)/(top-bot)*(H-pt-pb);
+  g.clearRect(0,0,Wd,H);g.font="10px system-ui";g.fillStyle=css("--mut");g.strokeStyle=css("--line");g.lineWidth=1;
+  for(const f of[20,50,100,200,500,1000,2000,5000,10000]){const x=fx(f);g.beginPath();g.moveTo(x,pt);g.lineTo(x,H-pb);g.stroke();g.fillText(f>=1000?f/1000+"k":f,x-8,H-6);}
+  for(let v=top;v>=bot;v-=20){const y=fy(v);g.beginPath();g.moveTo(pl,y);g.lineTo(Wd-pr,y);g.stroke();g.fillText(Math.round(v),2,y+3);}
+  // ANC zone shading
+  g.fillStyle="rgba(63,185,80,.08)";g.fillRect(fx(20),pt,fx(500)-fx(20),H-pt-pb);
+  const line=(arr,col,lw)=>{g.strokeStyle=col;g.lineWidth=lw;g.beginPath();let st=false;for(let k=2;k<R.K;k++){const f=k*R.df;if(f<20||f>10000)continue;const x=fx(f),y=fy(Math.max(bot,arr[k]));st?g.lineTo(x,y):(g.moveTo(x,y),st=true);}g.stroke();};
+  line(R.floor,css("--mut"),1);line(R.L,css("--acc"),1.4);
+  for(const p of R.peaks){if(p.f<20||p.f>10000)continue;const x=fx(p.f),y=fy(p.level);g.fillStyle=css(p.tier==="good"?"--good":p.tier==="mid"?"--mid":"--bad");g.beginPath();g.arc(x,y-5,4.5,0,7);g.fill();
+    if(p===selPeak){g.strokeStyle=css("--ink");g.lineWidth=1.5;g.beginPath();g.arc(x,y-5,7,0,7);g.stroke();}}
+  g.fillStyle=css("--mut");g.fillText("dB",2,pt+8);
+}
+function render(){
+  $("resCard").classList.remove("hide");$("genCard").classList.remove("hide");
+  const r=R.red;$("vNum").innerHTML=(r>=0.5?"−"+r.toFixed(0):"~0")+"<small> dB</small>";
+  let t,tx;
+  if(r>=6){t="Good ANC candidate";tx=`Cancelling the steady low tones could make this noise about ${r.toFixed(0)} dB(A) quieter near the error microphone.`;}
+  else if(r>=3){t="Partial benefit";tx=`ANC could take off about ${r.toFixed(0)} dB(A). The rest is broadband or high-frequency noise, which needs passive treatment.`;}
+  else{t="Not an ANC case";tx="Most of the heard energy is broadband or high-frequency. Start with passive measures: fix leaks, fit silencers, enclosures or damping.";}
+  const hi=R.bands[4].p+R.bands[5].p;if(hi/R.PtotA>0.5&&R.tonalFrac<0.2)tx+=" The spectrum looks like hiss (for example a compressed-air leak), so fixing the source also saves energy.";
+  $("vTitle").textContent=t;$("vText").textContent=tx+` Based on ${R.dur.toFixed(1)} s of audio.`;
+  $("kTonal").textContent=Math.round(R.tonalFrac*100)+"%";$("kLow").textContent=Math.round(R.lowFrac*100)+"%";$("kLvl").textContent=R.levelA.toFixed(0);
+  const bmax=Math.max(...R.bands.map(b=>b.p));
+  $("bands").innerHTML=R.bands.map(b=>{const pc=b.p/R.PtotA*100,col=b.hi<=500?"var(--good)":b.hi<=1000?"var(--mid)":"var(--bad)";return `<div class="band"><span>${b.name}</span><span class="t"><i style="width:${(b.p/bmax*100).toFixed(1)}%;background:${col}"></i></span><span style="text-align:right">${pc<1?"<1":pc.toFixed(0)}%</span></div>`;}).join("");
+  const sorted=[...R.peaks].sort((a,b)=>b.score-a.score||b.pwA-a.pwA);
+  $("peaks").innerHTML=sorted.length?sorted.map((p,i)=>{const lab=p.tier==="good"?"Good ANC target":p.tier==="mid"?"Possible":"Not for ANC";const share=p.pwA/R.PtotA*100;
+    const h=p.harmOf?` · harmonic ${p.harmN}× of ${p.harmOf.f.toFixed(1)} Hz`:p.isFund?" · fundamental":"";
+    return `<div class="peak" data-i="${R.peaks.indexOf(p)}"><div class="ph"><span class="pf">${p.f.toFixed(p.f<100?2:1)} Hz</span><span class="tag ${p.tier}">${lab} · ${p.score}</span></div>
+    <div class="pm">${share<1?"<1":share.toFixed(0)}% of heard energy · +${p.prom.toFixed(0)} dB over background${h}</div><div class="why">${p.why}</div></div>`;}).join("")
+    :`<div class="pm">No clear tones found. The noise is broadband, so ANC won't help much.</div>`;
+  document.querySelectorAll(".peak").forEach(el=>el.onclick=()=>selectPeak(R.peaks[+el.dataset.i]));
+  const best=sorted.find(p=>p.tier!=="bad")||sorted[0];if(best)selectPeak(best,true);else drawSpec();
+  $("btnPlayRec").disabled=!recBuf;
+}
+function selectPeak(p,quiet){selPeak=p;document.querySelectorAll(".peak").forEach(el=>el.classList.toggle("sel",R.peaks[+el.dataset.i]===p));
+  $("gF").value=Math.min(2000,p.f);$("gFt").value=0;updGen();drawSpec();if(!quiet)$("genCard").scrollIntoView({behavior:"smooth",block:"nearest"});}
+window.addEventListener("resize",drawSpec);
+
+/* ---------------- Inputs ---------------- */
+function runAnalysis(x,sr,label){setStatus("Analyzing…");prog(0.9);
+  setTimeout(()=>{try{R=analyze(x,sr);render();setStatus(`${label}: analyzed ${R.dur.toFixed(1)} s at ${sr} Hz (${R.peaks.length} tones found).`);$("resCard").scrollIntoView({behavior:"smooth"});}
+    catch(e){setStatus(e.message,true);}prog(null);},30);}
+
+$("btnLive").onclick=async()=>{
+  const dur=+$("dur").value;let stream;
+  try{if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("no api");
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}});}
+  catch(e){setStatus("The live microphone isn't available here (it's blocked inside the Claude app, and needs https or localhost). Record with your phone's voice recorder, then use \"Analyze a recording\".",true);return;}
+  const c=ctx(),src=c.createMediaStreamSource(stream);const sp=c.createScriptProcessor(4096,1,1);const chunks=[];let n=0;const need=Math.round(c.sampleRate*dur);
+  const mute=c.createGain();mute.gain.value=0;src.connect(sp);sp.connect(mute);mute.connect(c.destination);
+  const label=stream.getAudioTracks()[0]?.label||"microphone";
+  if(/hands-?free|headset|bluetooth|bt|hfp/i.test(label))setStatus(`⚠ Recording from "${label}". That looks like a Bluetooth mic, so results will be poor. Disconnect its mic or use the phone mic.`,true);
+  else setStatus(`Recording ${dur} s from "${label}"… keep still.`);
+  $("btnLive").disabled=true;
+  let wake=null;try{wake=await navigator.wakeLock?.request("screen");}catch(e){}
+  const an=c.createAnalyser();an.fftSize=8192;an.smoothingTimeConstant=0.6;src.connect(an);const lc=$("live");lc.classList.remove("hide");let live=true;
+  const fb=new Float32Array(an.frequencyBinCount);
+  (function draw(){if(!live)return;an.getFloatFrequencyData(fb);const dpr=window.devicePixelRatio||1,Wd=lc.clientWidth,H=110;lc.width=Wd*dpr;lc.height=H*dpr;const g=lc.getContext("2d");g.scale(dpr,dpr);
+    const fx=f=>(Math.log10(f)-Math.log10(20))/(Math.log10(10000)-Math.log10(20))*Wd;const dfL=c.sampleRate/an.fftSize;g.strokeStyle=css("--acc");g.lineWidth=1.3;g.beginPath();let st=false;
+    for(let k=1;k<fb.length;k++){const f=k*dfL;if(f<20||f>10000)continue;const y=H-(fb[k]+110)/90*H;st?g.lineTo(fx(f),y):(g.moveTo(fx(f),y),st=true);}g.stroke();
+    g.fillStyle=css("--mut");g.font="10px system-ui";g.fillText("live spectrum · 20 Hz – 10 kHz",6,12);requestAnimationFrame(draw);})();
+  await new Promise(res=>{sp.onaudioprocess=ev=>{const d=ev.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));n+=d.length;prog(Math.min(1,n/need)*0.85);if(n>=need){sp.onaudioprocess=null;res();}};});
+  live=false;lc.classList.add("hide");try{wake&&wake.release();}catch(e){}
+  sp.disconnect();src.disconnect();an.disconnect();stream.getTracks().forEach(t=>t.stop());$("btnLive").disabled=false;
+  const x=new Float32Array(n);let o=0;for(const ch of chunks){x.set(ch,o);o+=ch.length;}
+  recBuf=c.createBuffer(1,n,c.sampleRate);recBuf.copyToChannel(x,0);
+  runAnalysis(x,c.sampleRate,"Live");
+};
+
+$("file").onchange=async ev=>{const f=ev.target.files[0];if(!f)return;setStatus(`Decoding ${f.name}…`);prog(0.3);
+  try{const ab=await f.arrayBuffer();const c=ctx();
+    const buf=await new Promise((res,rej)=>{const p=c.decodeAudioData(ab,res,rej);if(p&&p.then)p.then(res,rej);});
+    const n=buf.length,x=new Float32Array(n);for(let ch=0;ch<buf.numberOfChannels;ch++){const d=buf.getChannelData(ch);for(let i=0;i<n;i++)x[i]+=d[i]/buf.numberOfChannels;}
+    recBuf=buf;runAnalysis(x,buf.sampleRate,f.name);}
+  catch(e){prog(null);setStatus("This file couldn't be decoded. Use WAV, M4A/AAC or MP3 (AMR from some Android recorders isn't supported).",true);}
+  ev.target.value="";};
+
+function demoSignal(sr,sec){const n=sr*sec,x=new Float32Array(n);let ph=[0,0,0,0,0],ph2=0,b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0,hp=0,hpPrev=0;
+  const shaft=24.8,amps=[.05,.12,.09,.05,.03];let fdrift=0;
+  for(let i=0;i<n;i++){fdrift+=((Math.random()-.5)*0.002);fdrift*=0.9995;const f0=shaft*(1+fdrift*0.01);
+    let s=0;for(let h=0;h<5;h++){ph[h]+=2*Math.PI*f0*(h+1)*2/sr;s+=amps[h]*Math.sin(ph[h]);} // 49.6 Hz family (2× shaft)
+    ph2+=2*Math.PI*300/sr;s+=0.06*Math.sin(ph2)*(1+0.1*Math.sin(2*Math.PI*0.3*i/sr));
+    const w=Math.random()*2-1;b0=.99886*b0+w*.0555179;b1=.99332*b1+w*.0750759;b2=.969*b2+w*.153852;b3=.8665*b3+w*.3104856;b4=.55*b4+w*.5329522;b5=-.7616*b5-w*.016898;
+    const pink=(b0+b1+b2+b3+b4+b5+b6+w*.5362)*0.004;b6=w*.115926;
+    const wn=Math.random()*2-1;hp=0.6*(hp+wn-hpPrev);hpPrev=wn; // hiss
+    x[i]=s+pink+hp*0.02;}
+  return x;}
+$("btnDemo").onclick=()=>{const c=ctx(),sr=c.sampleRate,x=demoSignal(sr,12);recBuf=c.createBuffer(1,x.length,sr);recBuf.copyToChannel(x,0);setStatus("Generating demo…");prog(0.4);runAnalysis(x,sr,"Demo (simulated machine: 49.6 Hz hum + harmonics, 300 Hz tone, background and hiss)");};
+
+let recNode=null;
+$("btnPlayRec").onclick=()=>{if(recNode){recNode.stop();recNode=null;$("btnPlayRec").textContent="▶ Play recording";return;}
+  if(!recBuf)return;const c=ctx();recNode=c.createBufferSource();recNode.buffer=recBuf;recNode.loop=true;recNode.connect(c.destination);recNode.start();$("btnPlayRec").textContent="■ Stop recording";};
+
+$("btnCopy").onclick=async()=>{if(!R)return;const L=[`ANC Noise Analyzer: ${$("vTitle").textContent} (est. −${R.red.toFixed(1)} dB(A))`,`Duration ${R.dur.toFixed(1)} s · tonal ${Math.round(R.tonalFrac*100)}% · below 500 Hz ${Math.round(R.lowFrac*100)}%`,"Bands (A-wtd share): "+R.bands.map(b=>`${b.name} ${(b.p/R.PtotA*100).toFixed(0)}%`).join(", "),"Tones:"];
+  for(const p of [...R.peaks].sort((a,b)=>b.score-a.score))L.push(`  ${p.f.toFixed(2)} Hz · score ${p.score} (${p.tier}) · +${p.prom.toFixed(0)} dB · jitter ±${p.fJit.toFixed(2)} Hz · ${(p.pwA/R.PtotA*100).toFixed(0)}% energy${p.harmOf?` · H${p.harmN} of ${p.harmOf.f.toFixed(1)}`:""}`);
+  try{await navigator.clipboard.writeText(L.join("\n"));$("btnCopy").textContent="✓ Copied";}catch(e){$("btnCopy").textContent="Copy blocked";}setTimeout(()=>$("btnCopy").textContent="📋 Copy summary",1800);};
+
+$("btnWav").onclick=()=>{if(!recBuf)return;const n=recBuf.length,sr=recBuf.sampleRate,ch=recBuf.numberOfChannels;const ab=new ArrayBuffer(44+n*2),v=new DataView(ab);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};ws(0,"RIFF");v.setUint32(4,36+n*2,true);ws(8,"WAVE");ws(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);ws(36,"data");v.setUint32(40,n*2,true);
+  const d=[];for(let c=0;c<ch;c++)d.push(recBuf.getChannelData(c));for(let i=0;i<n;i++){let s=0;for(let c=0;c<ch;c++)s+=d[c][i];s/=ch;v.setInt16(44+i*2,Math.max(-1,Math.min(1,s))*32767,true);}
+  const ts=new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");const name=`noise_${ts}.wav`;const blob=new Blob([ab],{type:"audio/wav"});
+  const file=new File([blob],name,{type:"audio/wav"});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({files:[file],title:name}).catch(()=>{});return;}
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);};
+
+/* ---------------- Anti-tone generator ---------------- */
+let gen=null;
+function genFreq(){return Math.max(10,+$("gF").value + +$("gFt").value);}
+function updGen(){const f=genFreq(),ph=+$("gP").value,g=+$("gG").value;$("oF").textContent=(+$("gF").value).toFixed(1)+" Hz";$("oFt").textContent=(+$("gFt").value>=0?"+":"")+(+$("gFt").value).toFixed(2)+" Hz";$("oP").textContent=ph+"°";$("oG").textContent=Math.round(g*100)+"%";
+  if(gen){const t=gen.c.currentTime;gen.o.frequency.setTargetAtTime(f,t,0.02);gen.d.delayTime.setTargetAtTime((ph/360)/f,t,0.03);gen.g.gain.setTargetAtTime(g*0.5,t,0.03);}}
+["gF","gFt","gP","gG"].forEach(id=>$(id).addEventListener("input",updGen));
+$("gPlay").onclick=()=>{if(gen){gen.g.gain.setTargetAtTime(0,gen.c.currentTime,0.03);const G=gen;setTimeout(()=>{try{G.o.stop();}catch(e){}},200);gen=null;$("gPlay").textContent="▶ Play anti-tone";return;}
+  const c=ctx(),o=c.createOscillator(),d=c.createDelay(1),g=c.createGain();g.gain.value=0;o.connect(d);d.connect(g);g.connect(c.destination);o.start();gen={c,o,d,g};updGen();$("gPlay").textContent="■ Stop anti-tone";};
+updGen();
+if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>
