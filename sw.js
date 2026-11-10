@@ -1,5 +1,5 @@
 // Offline cache for ANC Noise Analyzer. Bump VERSION when files change.
-const VERSION = "anc-v1";
+const VERSION = "anc-v2";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-180.png"];
 
 self.addEventListener("install", e => {

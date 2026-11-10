@@ -116,6 +116,17 @@ ul.tips li{margin-bottom:5px}
   <div class="note">If you hear slow "wah-wah" beating, the machine's frequency differs slightly from the tone: adjust Fine tune until the beating slows down. A machine whose speed drifts needs a speed (tacho/PLC) reference, which is what the real controller uses.</div>
 </section>
 
+<section class="card" id="ancCard">
+  <h2><span class="num">4</span>Live cancel (experimental)</h2>
+  <div class="pm">The app listens, finds the steady tones, learns how the speaker's sound reaches the microphone, then plays anti-noise and keeps adapting. <b>The quiet spot forms at the microphone</b>, so hold that microphone next to your ear and stand still.</div>
+  <div class="row" style="margin-top:10px"><select id="aMic" style="flex:1"><option value="">Default microphone</option></select></div>
+  <div class="row" style="margin-top:8px"><button class="pri" id="aStart">▶ Start listening</button></div>
+  <div class="row hide" id="aCtl" style="margin-top:8px"><button id="aDetect">🔎 1 Detect</button><button id="aLearn">🎓 2 Learn</button><button id="aAnc">3 ANC: OFF</button></div>
+  <div class="verdict hide" id="aRedBox" style="margin-top:12px"><div class="big" id="aRed">–</div><div class="pm">reduction of the detected tones, measured at the microphone</div></div>
+  <div id="aTones" style="margin-top:8px"></div>
+  <div class="status" id="aLog" style="white-space:pre-wrap"></div>
+</section>
+
 <section class="card">
   <h2>Bluetooth & phone tips</h2>
   <ul class="tips">
@@ -335,6 +346,95 @@ function updGen(){const f=genFreq(),ph=+$("gP").value,g=+$("gG").value;$("oF").t
 ["gF","gFt","gP","gG"].forEach(id=>$(id).addEventListener("input",updGen));
 $("gPlay").onclick=()=>{if(gen){gen.g.gain.setTargetAtTime(0,gen.c.currentTime,0.03);const G=gen;setTimeout(()=>{try{G.o.stop();}catch(e){}},200);gen=null;$("gPlay").textContent="▶ Play anti-tone";return;}
   const c=ctx(),o=c.createOscillator(),d=c.createDelay(1),g=c.createGain();g.gain.value=0;o.connect(d);d.connect(g);g.connect(c.destination);o.start();gen={c,o,d,g};updGen();$("gPlay").textContent="■ Stop anti-tone";};
+
+/* ---------------- Live cancel: narrowband FxLMS (ported from anc_demo.html real-ANC mode) ---------------- */
+const SIM=/[?&]sim/.test(location.search), BLK=2048;
+const A={on:false,tones:[],anc:false,learning:false,collect:false,busy:false,dBlk:4,ring:new Float32Array(1<<18),w:0,total:0,sr:48000};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const aLog=(t,clear)=>{const e=$("aLog");e.textContent=clear?t:e.textContent+"\n"+t;};
+function demod(x,f,i0,n,th0){const w=2*Math.PI*f/A.sr,c=Math.cos(w),sn=Math.sin(w);let cr=Math.cos(th0),ci=Math.sin(th0),re=0,im=0;
+  for(let i=0;i<n;i++){const v=x[i0+i];re+=v*cr;im-=v*ci;const t=cr*c-ci*sn;ci=cr*sn+ci*c;cr=t;}return{re:2*re/n,im:2*im/n};}
+const cabs=z=>Math.hypot(z.re,z.im),cdb=z=>20*Math.log10(cabs(z)+1e-9);
+function applyW(t){const now=AC.currentTime;t.gc.gain.setTargetAtTime(t.W.re,now,.015);t.gs.gain.setTargetAtTime(-t.W.im,now,.015);}
+function setOut(){if(A.out)A.out.gain.setTargetAtTime((A.anc||A.learning)?1:0,AC.currentTime,.02);}
+function ancBlock(d,r){const mu=0.45/(1+A.dBlk);
+  for(const t of A.tones){const M=demod(d,t.f,0,d.length,0),R=demod(r,t.f,0,r.length,0),ra=cabs(R);if(ra<1e-3)continue;
+    const E={re:(M.re*R.re+M.im*R.im)/ra,im:(M.im*R.re-M.re*R.im)/ra};if(A.collect)t.acc.push(E);
+    const db=cdb(E);t.cur=t.cur===undefined?db:t.cur*.7+db*.3;
+    if(A.anc&&!A.learning&&t.S){const s2=t.S.re**2+t.S.im**2;
+      t.W.re-=mu*(E.re*t.S.re+E.im*t.S.im)/s2;t.W.im-=mu*(E.im*t.S.re-E.re*t.S.im)/s2;
+      const lim=0.95/A.tones.length,a=cabs(t.W);t.sat=a>lim;if(t.sat){t.W.re*=lim/a;t.W.im*=lim/a;}applyW(t);
+      t.bad=(t.cur>t.base+6)?(t.bad||0)+1:0;
+      if(t.bad>25){t.W={re:0,im:0};applyW(t);t.bad=0;aLog(`⚠ ${t.f.toFixed(1)} Hz got louder, reset. Press Learn again if it repeats.`);}}}}
+async function aRecord(n){const st=A.total;while(A.total-st<n)await sleep(20);const out=new Float32Array(n),R=A.ring.length,end=A.w-(A.total-st-n);
+  for(let i=0;i<n;i++)out[i]=A.ring[((end-n+i)%R+R)%R];return out;}
+async function aCollect(ms){A.tones.forEach(t=>t.acc=[]);A.collect=true;await sleep(ms);A.collect=false;
+  return A.tones.map(t=>{const n=t.acc.length||1;return{re:t.acc.reduce((a,z)=>a+z.re,0)/n,im:t.acc.reduce((a,z)=>a+z.im,0)/n};});}
+function stopTones(){for(const t of A.tones){try{t.o1.stop();t.o2.stop();t.gs.disconnect();t.gc.disconnect();}catch(e){}}A.tones=[];}
+async function ancStop(){setAnc(false);stopTones();if(A.cap){A.cap.onaudioprocess=null;try{A.cap.disconnect();}catch(e){}}
+  if(A.stream)A.stream.getTracks().forEach(t=>t.stop());A.stream=null;A.on=false;try{A.wake&&A.wake.release();}catch(e){}
+  $("aStart").textContent="▶ Start listening";$("aCtl").classList.add("hide");$("aRedBox").classList.add("hide");renderTones();}
+async function ancStart(){
+  const c=ctx();A.sr=c.sampleRate;let src;
+  if(SIM){const n=c.createGain();for(const [f,a] of [[233.7,.05],[351.3,.03]]){const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;g.gain.value=a;o.connect(g);g.connect(n);o.start();}
+    A.simIn=c.createDelay(1);A.simIn.delayTime.value=0.22;const pg=c.createGain();pg.gain.value=0.6;A.simIn.connect(pg);pg.connect(n);src=n;}
+  else{const id=$("aMic").value,cons={echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1};if(id)cons.deviceId={exact:id};
+    try{A.stream=await navigator.mediaDevices.getUserMedia({audio:cons});}catch(e){aLog("The microphone isn't available. Allow it in the browser, and open the app from its https address.",true);return;}
+    src=c.createMediaStreamSource(A.stream);
+    try{const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="audioinput");const cur=A.stream.getAudioTracks()[0].getSettings().deviceId;
+      $("aMic").innerHTML=devs.map((d,i)=>`<option value="${d.deviceId}">${d.label||"Microphone "+(i+1)}</option>`).join("");if(cur)$("aMic").value=cur;}catch(e){}}
+  const hp=c.createBiquadFilter();hp.type="highpass";hp.frequency.value=40;
+  const an=c.createAnalyser();an.fftSize=8192;an.smoothingTimeConstant=.55;an.minDecibels=-120;an.maxDecibels=-10;A.an=an;
+  const cap=c.createScriptProcessor(BLK,2,1),z=c.createGain(),mg=c.createChannelMerger(2);z.gain.value=0;A.cap=cap;
+  A.refBus=c.createGain();A.refBus.connect(mg,0,1);src.connect(hp);hp.connect(an);hp.connect(mg,0,0);mg.connect(cap);cap.connect(z);z.connect(c.destination);
+  A.out=c.createGain();A.out.gain.value=0;A.out.connect(c.destination);if(SIM)A.out.connect(A.simIn);
+  cap.onaudioprocess=e=>{const d=e.inputBuffer.getChannelData(0);for(let i=0;i<d.length;i++){A.ring[A.w]=d[i];A.w=(A.w+1)&(A.ring.length-1);}A.total+=d.length;
+    if(A.tones.length)ancBlock(d,e.inputBuffer.getChannelData(1));};
+  try{A.wake=await navigator.wakeLock?.request("screen");}catch(e){}
+  A.on=true;$("aStart").textContent="■ Stop";$("aCtl").classList.remove("hide");
+  const lab=SIM?"simulated room":(A.stream.getAudioTracks()[0]?.label||"microphone");
+  aLog(`Listening on "${lab}". With the noise running, press 1 Detect.`,true);}
+async function ancDetect(){if(!A.on||A.busy)return;A.busy=true;setAnc(false);stopTones();aLog("Listening for 1.5 s…",true);
+  try{const an=A.an,n=an.frequencyBinCount,acc=new Float64Array(n),tmp=new Float32Array(n);
+    for(let k=0;k<25;k++){await sleep(60);an.getFloatFrequencyData(tmp);for(let i=0;i<n;i++)acc[i]+=10**(tmp[i]/10);}
+    const dbs=Array.from(acc,v=>10*Math.log10(v/25+1e-20)),df=A.sr/2/n,lo=Math.ceil(70/df),hi=Math.floor(Math.min(2000,A.sr*0.45)/df),med=[...dbs.slice(lo,hi)].sort((a,b)=>a-b)[(hi-lo)>>1];
+    let pk=[];for(let i=lo;i<hi;i++)if(dbs[i]>dbs[i-1]&&dbs[i]>=dbs[i+1]&&dbs[i]>med+18&&dbs[i]>-95){const p=0.5*(dbs[i-1]-dbs[i+1])/(dbs[i-1]-2*dbs[i]+dbs[i+1]||1);pk.push({f:(i+p)*df,db:dbs[i]});}
+    pk.sort((a,b)=>b.db-a.db);const sel=[];for(const p of pk){if(sel.every(q=>Math.abs(q.f-p.f)>12))sel.push(p);if(sel.length===4)break;}sel.sort((a,b)=>a.f-b.f);
+    if(!sel.length){aLog("No steady tone found between 70 Hz and 2 kHz. This noise isn't a candidate for cancelling, or it is too quiet at the microphone.",true);return;}
+    const x=await aRecord(Math.round(A.sr*2)),c=AC,t0=c.currentTime+0.1,cosW=c.createPeriodicWave(new Float32Array([0,1]),new Float32Array([0,0]),{disableNormalization:true});
+    const refine=f=>{const N=Math.round(A.sr*0.1),K=Math.floor(x.length/N);for(const lag of[1,4]){const ph=[];for(let k=0;k<K;k++){const z=demod(x,f,k*N,N,2*Math.PI*f*k*N/A.sr);ph.push(Math.atan2(z.im,z.re));}
+        const st=[];for(let k=0;k+lag<K;k++){let d=ph[k+lag]-ph[k];st.push(Math.atan2(Math.sin(d),Math.cos(d)));}st.sort((p,q)=>p-q);if(st.length)f+=st[st.length>>1]/(2*Math.PI*lag*N/A.sr);}return f;};
+    A.tones=sel.map(p=>{const f=refine(p.f),o1=c.createOscillator(),o2=c.createOscillator(),gs=c.createGain(),gc=c.createGain();
+      o1.frequency.value=f;o2.frequency.value=f;o2.setPeriodicWave(cosW);gs.gain.value=0;gc.gain.value=0;
+      o1.connect(gs);o2.connect(gc);o1.connect(A.refBus);gs.connect(A.out);gc.connect(A.out);o1.start(t0);o2.start(t0);return{f,o1,o2,gs,gc,W:{re:0,im:0},S:null,acc:[],base:p.db};});
+    await sleep(400);const E0=await aCollect(500);A.tones.forEach((t,i)=>{t.base=cdb(E0[i]);t.cur=t.base;});
+    aLog(`Found ${A.tones.length} tone(s): `+A.tones.map(t=>t.f.toFixed(1)+" Hz").join(", ")+". Now press 2 Learn (quiet test tones, about 8 s). Don't move.",true);
+  }catch(e){aLog("Error: "+e.message);}finally{A.busy=false;renderTones();}}
+async function ancLearn(){const T=A.tones;if(!T.length){aLog("Press 1 Detect first.",true);return;}if(A.busy)return;A.busy=true;setAnc(false);A.learning=true;setOut();aLog("Learning the speaker → microphone path…",true);
+  try{const lat=1000*((AC.outputLatency||0)+(AC.baseLatency||0)),settle=350+Math.max(300,lat),w1=0.15/T.length,sum=T.map(()=>({re:0,im:0})),base=T.map(()=>0);
+    const setAll=v=>T.forEach(t=>{t.W={re:v,im:0};applyW(t);});
+    for(let r=0;r<3;r++){setAll(0);await sleep(settle);const E0=await aCollect(450);let E1;
+      if(r===0){T.forEach(t=>t.acc=[]);A.collect=true;setAll(w1);await sleep(settle+450);A.collect=false;
+        const a=T[0].acc;E1=T.map(t=>{const q=t.acc.slice(t.acc.length>>1),n=q.length||1;return{re:q.reduce((x,z)=>x+z.re,0)/n,im:q.reduce((x,z)=>x+z.im,0)/n};});
+        const full=Math.hypot(E1[0].re-E0[0].re,E1[0].im-E0[0].im);const d=a.findIndex(z=>Math.hypot(z.re-E0[0].re,z.im-E0[0].im)>=.63*full);A.dBlk=Math.max(1,d<0?6:d);
+      }else{setAll(w1);await sleep(settle);E1=await aCollect(450);}
+      T.forEach((t,i)=>{sum[i].re+=(E1[i].re-E0[i].re)/w1/3;sum[i].im+=(E1[i].im-E0[i].im)/w1/3;base[i]+=cdb(E0[i])/3;});}
+    setAll(0);let warn="";
+    T.forEach((t,i)=>{const g=cdb(sum[i]);t.base=base[i];t.cur=base[i];t.bad=0;
+      if(g<-55){t.S=null;warn+=`\n⚠ ${t.f.toFixed(0)} Hz: the microphone barely hears the speaker. Raise the speaker volume. If you use the speaker's own microphone, its call-mode echo canceller is probably removing the speaker's sound: switch to the phone microphone.`;}
+      else{t.S=sum[i];if(10**(base[i]/20)/cabs(sum[i])>0.95/T.length)warn+=`\n⚠ ${t.f.toFixed(0)} Hz: the speaker is too weak to match this noise here. Raise its volume or move it closer to the microphone.`;}});
+    aLog(`Loop delay ≈ ${Math.round(A.dBlk*BLK/A.sr*1000)} ms.`+(T.some(t=>t.S)?" Learned. Switch 3 ANC on.":"")+warn,true);
+  }catch(e){aLog("Error: "+e.message);}A.learning=false;A.busy=false;setOut();renderTones();}
+function setAnc(on){A.anc=on;$("aAnc").textContent="3 ANC: "+(on?"ON":"OFF");$("aAnc").classList.toggle("pri",on);if(!on)A.tones.forEach(t=>{t.W={re:0,im:0};if(A.on)applyW(t);});setOut();$("aRedBox").classList.toggle("hide",!on);}
+function renderTones(){const T=A.tones;if(!T.length){$("aTones").innerHTML="";return;}let p0=0,p1=0;
+  $("aTones").innerHTML=T.map(t=>{const r=(t.cur!==undefined)?t.base-t.cur:0;p0+=10**(t.base/10);p1+=10**((t.cur??t.base)/10);
+    const st=!t.S?"not learned":!A.anc?"ready":(r>=0?"−":"+")+Math.abs(r).toFixed(1)+" dB"+(t.sat?" · ⚠ speaker at max":"");
+    return `<div class="band" style="grid-template-columns:90px 1fr"><b>${t.f.toFixed(1)} Hz</b><span>${st}</span></div>`;}).join("");
+  if(A.anc){const r=10*Math.log10(p0/p1);$("aRed").innerHTML=(r>=0?"−":"+")+Math.abs(r).toFixed(0)+"<small> dB</small>";}}
+setInterval(()=>{if(A.on&&A.tones.length)renderTones();},300);
+$("aStart").onclick=()=>A.on?ancStop():ancStart();$("aDetect").onclick=ancDetect;$("aLearn").onclick=ancLearn;
+$("aAnc").onclick=()=>{if(!A.tones.some(t=>t.S)){aLog("Run 1 Detect and 2 Learn first.",true);return;}setAnc(!A.anc);};
+$("aMic").onchange=async()=>{if(A.on){await ancStop();await ancStart();}};
 updGen();
 if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
